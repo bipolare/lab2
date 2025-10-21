@@ -1,80 +1,119 @@
-using Moq;
+﻿using Moq;
 using NetSdrClientApp;
 using NetSdrClientApp.Networking;
-using System.Threading.Tasks;
-using Xunit;
 
-// Убедитесь, что в вашем тестовом проекте установлены пакеты Moq и xUnit.
+namespace NetSdrClientAppTests;
 
-namespace NetSdrClientAppTests
+public class NetSdrClientTests
 {
-    public class NetSdrClientTests
+    NetSdrClient _client;
+    Mock<ITcpClient> _tcpMock;
+    Mock<IUdpClient> _updMock;
+
+    public NetSdrClientTests() { }
+
+    [SetUp]
+    public void Setup()
     {
-        // Задача: Покрыть ветку 'if (!_tcpClient.Connected)' в StartIQAsync() и SendTcpRequest().
-        
-        [Fact]
-        public async Task StartIQAsync_NoConnection_HandlesGracefully()
+        _tcpMock = new Mock<ITcpClient>();
+        _tcpMock.Setup(tcp => tcp.Connect()).Callback(() =>
         {
-            // --- Setup ---
-            
-            // 1. Мокируем ITcpClient и настраиваем, чтобы Connected всегда возвращал false
-            var mockTcpClient = new Mock<ITcpClient>();
-            mockTcpClient.SetupGet(c => c.Connected).Returns(false);
-            
-            // 2. Мокируем IUdpClient (не используется в этом сценарии, но нужен для конструктора)
-            var mockUdpClient = new Mock<IUdpClient>();
+            _tcpMock.Setup(tcp => tcp.Connected).Returns(true);
+        });
 
-            // 3. Создаем экземпляр клиента
-            var client = new NetSdrClient(mockTcpClient.Object, mockUdpClient.Object);
-
-            // --- Act ---
-            // Вызываем метод, который содержит непокрытую ветку
-            await client.StartIQAsync();
-
-            // --- Assert ---
-            
-            // Проверяем, что SendMessageAsync НИКОГДА не был вызван,
-            // поскольку код должен был выйти по 'return;'
-            mockTcpClient.Verify(c => c.SendMessageAsync(It.IsAny<byte[]>()), Times.Never());
-            
-            // Проверяем, что StartListeningAsync НИКОГДА не был вызван
-            mockUdpClient.Verify(u => u.StartListeningAsync(), Times.Never());
-
-            // Убедитесь, что IQStarted не установился в true
-            Assert.False(client.IQStarted);
-
-            // Если тест пройдет успешно, это покроет ветку в StartIQAsync().
-            // Поскольку SendTcpRequest вызывается из StartIQAsync, и он тоже делает проверку,
-            // этот один тест, вероятно, покроет обе непокрытые строки (StartIQAsync и SendTcpRequest).
-        }
-        
-        [Fact]
-        public async Task StopIQAsync_NoConnection_HandlesGracefully()
+        _tcpMock.Setup(tcp => tcp.Disconnect()).Callback(() =>
         {
-            // --- Setup ---
-            
-            // 1. Мокируем ITcpClient и настраиваем, чтобы Connected всегда возвращал false
-            var mockTcpClient = new Mock<ITcpClient>();
-            mockTcpClient.SetupGet(c => c.Connected).Returns(false);
-            
-            // 2. Мокируем IUdpClient (не используется в этом сценарии, но нужен для конструктора)
-            var mockUdpClient = new Mock<IUdpClient>();
+            _tcpMock.Setup(tcp => tcp.Connected).Returns(false);
+        });
 
-            // 3. Создаем экземпляр клиента
-            var client = new NetSdrClient(mockTcpClient.Object, mockUdpClient.Object);
+        _tcpMock.Setup(tcp => tcp.SendMessageAsync(It.IsAny<byte[]>())).Callback<byte[]>((bytes) =>
+        {
+            _tcpMock.Raise(tcp => tcp.MessageReceived += null, _tcpMock.Object, bytes);
+        });
 
-            // --- Act ---
-            // Вызываем метод, который содержит непокрытую ветку
-            await client.StopIQAsync();
+        _updMock = new Mock<IUdpClient>();
 
-            // --- Assert ---
-            
-            // Проверяем, что SendMessageAsync НИКОГДА не был вызван,
-            // поскольку код должен был выйти по 'return;'
-            mockTcpClient.Verify(c => c.SendMessageAsync(It.IsAny<byte[]>()), Times.Never());
-            
-            // Проверяем, что StopListening НИКОГДА не был вызван
-            mockUdpClient.Verify(u => u.StopListening(), Times.Never());
-        }
+        _client = new NetSdrClient(_tcpMock.Object, _updMock.Object);
     }
+
+    [Test]
+    public async Task ConnectAsyncTest()
+    {
+        //act
+        await _client.ConnectAsync();
+
+        //assert
+        _tcpMock.Verify(tcp => tcp.Connect(), Times.Once);
+        _tcpMock.Verify(tcp => tcp.SendMessageAsync(It.IsAny<byte[]>()), Times.Exactly(3));
+    }
+
+    [Test]
+    public async Task DisconnectWithNoConnectionTest()
+    {
+        //act
+        _client.Disconect();
+
+        //assert
+        //No exception thrown
+        _tcpMock.Verify(tcp => tcp.Disconnect(), Times.Once);
+    }
+
+    [Test]
+    public async Task DisconnectTest()
+    {
+        //Arrange 
+        await ConnectAsyncTest();
+
+        //act
+        _client.Disconect();
+
+        //assert
+        //No exception thrown
+        _tcpMock.Verify(tcp => tcp.Disconnect(), Times.Once);
+    }
+
+    [Test]
+    public async Task StartIQNoConnectionTest()
+    {
+
+        //act
+        await _client.StartIQAsync();
+
+        //assert
+        //No exception thrown
+        _tcpMock.Verify(tcp => tcp.SendMessageAsync(It.IsAny<byte[]>()), Times.Never);
+        _tcpMock.VerifyGet(tcp => tcp.Connected, Times.AtLeastOnce);
+    }
+
+    [Test]
+    public async Task StartIQTest()
+    {
+        //Arrange 
+        await ConnectAsyncTest();
+
+        //act
+        await _client.StartIQAsync();
+
+        //assert
+        //No exception thrown
+        _updMock.Verify(udp => udp.StartListeningAsync(), Times.Once);
+        Assert.That(_client.IQStarted, Is.True);
+    }
+
+    [Test]
+    public async Task StopIQTest()
+    {
+        //Arrange 
+        await ConnectAsyncTest();
+
+        //act
+        await _client.StopIQAsync();
+
+        //assert
+        //No exception thrown
+        _updMock.Verify(tcp => tcp.StopListening(), Times.Once);
+        Assert.That(_client.IQStarted, Is.False);
+    }
+
+    //TODO: cover the rest of the NetSdrClient code here
 }

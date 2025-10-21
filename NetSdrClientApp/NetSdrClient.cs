@@ -1,4 +1,4 @@
-using NetSdrClientApp.Messages;
+﻿using NetSdrClientApp.Messages;
 using NetSdrClientApp.Networking;
 using System;
 using System.Collections.Generic;
@@ -8,20 +8,14 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using static NetSdrClientApp.Messages.NetSdrMessageHelper;
-
-// Предполагая, что ваш код использует FileStream и BinaryWriter
-using System.IO; 
-
-// Убрана директива "using static System.Runtime.InteropServices.JavaScript.JSType;"
-// так как она, скорее всего, не нужна для .NET Standard/Core проекта и может вызывать ошибки.
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace NetSdrClientApp
 {
     public class NetSdrClient
     {
-        // Теперь используем интерфейсы для тестирования
-        private readonly ITcpClient _tcpClient;
-        private readonly IUdpClient _udpClient;
+        private ITcpClient _tcpClient;
+        private IUdpClient _udpClient;
 
         public bool IQStarted { get; set; }
 
@@ -41,8 +35,6 @@ namespace NetSdrClientApp
             {
                 _tcpClient.Connect();
 
-                // Использование BitConverter.GetBytes(long) с .Take(5) не является стандартным. 
-                // Оставляю как есть, предполагая, что это часть вашего протокола.
                 var sampleRate = BitConverter.GetBytes((long)100000).Take(5).ToArray();
                 var automaticFilterMode = BitConverter.GetBytes((ushort)0).ToArray();
                 var adMode = new byte[] { 0x00, 0x03 };
@@ -75,7 +67,7 @@ namespace NetSdrClientApp
                 return;
             }
 
-            var iqDataMode = (byte)0x80;
+;           var iqDataMode = (byte)0x80;
             var start = (byte)0x02;
             var fifo16bitCaptureMode = (byte)0x01;
             var n = (byte)1;
@@ -114,12 +106,6 @@ namespace NetSdrClientApp
 
         public async Task ChangeFrequencyAsync(long hz, int channel)
         {
-            if (!_tcpClient.Connected)
-            {
-                Console.WriteLine("No active connection.");
-                return;
-            }
-
             var channelArg = (byte)channel;
             var frequencyArg = BitConverter.GetBytes(hz).Take(5);
             var args = new[] { channelArg }.Concat(frequencyArg).ToArray();

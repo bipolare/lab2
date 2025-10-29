@@ -17,6 +17,9 @@
     <PackageReference Include="NUnit.Analyzers" Version="3.9.0" />
     <PackageReference Include="NUnit3TestAdapter" Version="4.5.0" />
 
+    <!-- Пакет для архітектурних тестів (тепер додано) -->
+    <PackageReference Include="NetArchTest.Rules" Version="1.3.2" />
+
     <!-- Пакети для покриття коду -->
     <PackageReference Include="coverlet.collector" Version="6.0.0" />
     <PackageReference Include="coverlet.msbuild" Version="6.0.4">

@@ -1,34 +1,157 @@
-<Project Sdk="Microsoft.NET.Sdk">
+using NetSdrClientApp;
+using NetSdrClientApp.Messages;
+using NetSdrClientApp.Networking;
+using Moq;
+using NUnit.Framework; // Змінено на NUnit
+using System;
+using System.Threading.Tasks;
 
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+namespace NetSdrClientApp.Tests
+{
+    // [TestFixture] в NUnit схожий на клас тестів у xUnit, але використовує [SetUp] для ініціалізації.
+    [TestFixture] 
+    public class NetSdrClientTests
+    {
+        // Приватні поля
+        private Mock<ITcpClient> _tcpClientMock;
+        private Mock<IUdpClient> _udpClientMock;
+        private NetSdrClient _client;
 
-    <IsPackable>false</IsPackable>
-    <IsTestProject>true</IsTestProject>
-  </PropertyGroup>
+        // [SetUp] виконується перед кожним тестом, замінюючи логіку конструктора, 
+        // яку ми використовували у xUnit.
+        [SetUp] 
+        public void SetUp()
+        {
+            _tcpClientMock = new Mock<ITcpClient>();
+            _udpClientMock = new Mock<IUdpClient>();
 
-  <ItemGroup>
-    <PackageReference Include="coverlet.collector" Version="6.0.0" />
-    <PackageReference Include="coverlet.msbuild" Version="6.0.4">
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-      <PrivateAssets>all</PrivateAssets>
-    </PackageReference>
-    <PackageReference Include="NetArchTest.Rules" Version="1.3.2" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.0" />
-    <PackageReference Include="Moq" Version="4.20.72" />
-    <PackageReference Include="NUnit" Version="3.14.0" />
-    <PackageReference Include="NUnit.Analyzers" Version="3.9.0" />
-    <PackageReference Include="NUnit3TestAdapter" Version="4.5.0" />
-  </ItemGroup>
+            // Налаштування поведінки за замовчуванням: вважаємо, що клієнт підключений
+            _tcpClientMock.SetupGet(c => c.Connected).Returns(true);
+            
+            _client = new NetSdrClient(_tcpClientMock.Object, _udpClientMock.Object);
+        }
 
-  <ItemGroup>
-    <ProjectReference Include="..\NetSdrClientApp\NetSdrClientApp.csproj" />
-  </ItemGroup>
+        // --- Покриття рядків 36, 37 (Перевірка ArgumentNullException) ---
+        [Test]
+        public void Constructor_ThrowsArgumentNullException_WhenTcpClientIsNull()
+        {
+            // Рядок 36: _tcpClient = tcpClient ?? throw ...
+            Assert.Throws<ArgumentNullException>(() => 
+                new NetSdrClient(null, _udpClientMock.Object));
+        }
 
-  <ItemGroup>
-    <Using Include="NUnit.Framework" />
-  </ItemGroup>
+        [Test]
+        public void Constructor_ThrowsArgumentNullException_WhenUdpClientIsNull()
+        {
+            // Рядок 37: _udpClient = udpClient ?? throw ...
+            Assert.Throws<ArgumentNullException>(() => 
+                new NetSdrClient(_tcpClientMock.Object, null));
+        }
 
-</Project>
+        // --- Покриття рядків 104, 121, 131, 149 (Перевірка стану "Не підключено") ---
+        [Test]
+        public async Task StartIQAsync_DoesNothing_WhenNotConnected()
+        {
+            // Налаштовуємо мок, щоб імітувати відсутність з'єднання
+            _tcpClientMock.SetupGet(c => c.Connected).Returns(false);
+            
+            // Рядок 104: if (!EnsureConnected()) return;
+            await _client.StartIQAsync();
+
+            // Перевіряємо, що ми не намагалися відправити повідомлення
+            _tcpClientMock.Verify(c => c.SendMessageAsync(It.IsAny<byte[]>()), Times.Never);
+        }
+
+        [Test]
+        public async Task StopIQAsync_DoesNothing_WhenNotConnected()
+        {
+            // Рядок 121: if (!EnsureConnected()) return;
+            _tcpClientMock.SetupGet(c => c.Connected).Returns(false);
+            
+            await _client.StopIQAsync();
+
+            // Перевіряємо, що ми не намагалися відправити повідомлення
+            _tcpClientMock.Verify(c => c.SendMessageAsync(It.IsAny<byte[]>()), Times.Never);
+        }
+
+        [Test]
+        public async Task ChangeFrequencyAsync_DoesNothing_WhenNotConnected()
+        {
+            // Рядок 131: if (!EnsureConnected()) return;
+            _tcpClientMock.SetupGet(c => c.Connected).Returns(false);
+            
+            await _client.ChangeFrequencyAsync(100000, 1);
+
+            // Перевіряємо, що ми не намагалися відправити повідомлення
+            _tcpClientMock.Verify(c => c.SendMessageAsync(It.IsAny<byte[]>()), Times.Never);
+        }
+        
+        [Test]
+        public async Task SendTcpRequestAsync_ReturnsNull_WhenNotConnected()
+        {
+            // Рядок 149: if (!_tcpClient.Connected)
+            _tcpClientMock.SetupGet(c => c.Connected).Returns(false);
+            var testMessage = new byte[] { 0x01 };
+
+            var result = await _client.SendTcpRequestAsync(testMessage);
+
+            // Перевіряємо, що повертається null
+            Assert.IsNull(result);
+            // Перевіряємо, що не було спроби відправки
+            _tcpClientMock.Verify(c => c.SendMessageAsync(It.IsAny<byte[]>()), Times.Never);
+        }
+
+        // --- Покриття рядків 136, 137 (Перевірка некоректних UDP даних) ---
+        [Test]
+        public void OnUdpMessageReceived_IgnoresNullData()
+        {
+            // Рядок 136: if (data == null || data.Length == 0) return;
+            // Імітуємо виклик події з null даними. 
+            // NUnit/Moq Raise приймає аргументи події як другий та наступні параметри.
+            _udpClientMock.Raise(c => c.MessageReceived += null, _udpClientMock.Object, (byte[])null);
+
+            // Перевіряємо, що жоден виняток не був кинутий.
+            Assert.Pass(); 
+        }
+
+        [Test]
+        public void OnUdpMessageReceived_IgnoresEmptyData()
+        {
+            // Рядок 136: if (data == null || data.Length == 0) return;
+            // Імітуємо виклик події з порожнім масивом
+            _udpClientMock.Raise(c => c.MessageReceived += null, _udpClientMock.Object, new byte[0]);
+
+            // Перевіряємо, що жоден виняток не був кинутий.
+            Assert.Pass();
+        }
+        
+        // --- Покриття рядків 161, 163, 164 (Dispose під час з'єднання) ---
+        [Test]
+        public void Dispose_DisconnectsAndStopsListening_WhenConnected()
+        {
+            // Налаштовуємо, що клієнт підключений
+            _tcpClientMock.SetupGet(c => c.Connected).Returns(true);
+            
+            _client.Dispose();
+
+            // Рядок 163: _tcpClient.Disconnect();
+            _tcpClientMock.Verify(c => c.Disconnect(), Times.Once); 
+            // Рядок 164: _udpClient.StopListening();
+            _udpClientMock.Verify(c => c.StopListening(), Times.Once);
+        }
+        
+        [Test]
+        public void Dispose_OnlyStopsListening_WhenDisconnected()
+        {
+            // Налаштовуємо, що клієнт відключений
+            _tcpClientMock.SetupGet(c => c.Connected).Returns(false);
+            
+            _client.Dispose();
+
+            // Рядок 161: if (_tcpClient.Connected) - не спрацює, тому Disconnect викликатися не має
+            _tcpClientMock.Verify(c => c.Disconnect(), Times.Never); 
+            // Рядок 164: _udpClient.StopListening();
+            _udpClientMock.Verify(c => c.StopListening(), Times.Once);
+        }
+    }
+}

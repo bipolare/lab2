@@ -22,7 +22,8 @@ namespace NetSdrClientApp.Tests
             _tcpClientMock = new Mock<ITcpClient>();
             _udpClientMock = new Mock<IUdpClient>();
 
-            // Налаштування поведінки за замовчуванням
+            // Налаштування поведінки за замовчуванням (використовується для тестів, які очікують підключення)
+            // Ми будемо перевизначати це в ConnectAsync_SendsConfigurationMessages для імітації процесу підключення.
             _tcpClientMock.SetupGet(c => c.Connected).Returns(true);
             
             _client = new NetSdrClient(_tcpClientMock.Object, _udpClientMock.Object);
@@ -57,8 +58,11 @@ namespace NetSdrClientApp.Tests
         public async Task ConnectAsync_SendsConfigurationMessages()
         {
             // Arrange
-            // Виправлення: Прибрано зайву крапку з комою (.;)
-            _tcpClientMock.SetupGet(c => c.Connected).Returns(false);
+            // FIX: Моделюємо зміну стану підключення (було false -> стало true)
+            // Це необхідно, тому що клієнт, ймовірно, перевіряє .Connected після виклику .Connect()
+            _tcpClientMock.SetupSequence(c => c.Connected)
+                .Returns(false) // 1. Початковий стан перед викликом Connect()
+                .Returns(true); // 2. Стан після успішного Connect(), що дозволяє надсилати повідомлення
 
             // Act
             await _client.ConnectAsync();

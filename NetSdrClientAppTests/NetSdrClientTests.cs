@@ -5,6 +5,7 @@ using Moq;
 using NUnit.Framework; 
 using System;
 using System.Threading.Tasks;
+using System.Linq; // Додано для використання .ToArray()
 
 namespace NetSdrClientApp.Tests
 {
@@ -50,6 +51,68 @@ namespace NetSdrClientApp.Tests
             // Використовуємо null!
             Assert.Throws<ArgumentNullException>(() => 
                 new NetSdrClient(_tcpClientMock.Object, null!));
+        }
+
+        [Test]
+        public async Task ConnectAsync_SendsConfigurationMessages()
+        {
+            // Arrange
+            // Переконаємося, що на початку він не підключений, щоб спрацювало Connect()
+            _tcpClientMock.SetupGet(c => c.Connected).Returns(false).;
+
+            // Act
+            await _client.ConnectAsync();
+
+            // Assert
+            // 1. Перевіряємо, чи був викликаний метод підключення
+            _tcpClientMock.Verify(c => c.Connect(), Times.Once);
+            
+            // 2. Перевіряємо, чи були відправлені 3 конфігураційні повідомлення
+            _tcpClientMock.Verify(c => c.SendMessageAsync(It.IsAny<byte[]>()), Times.Exactly(3));
+        }
+
+        [Test]
+        public async Task StartIQAsync_SendsCorrectMessageAndStartsListening()
+        {
+            // Act
+            await _client.StartIQAsync();
+
+            // Assert
+            // Перевіряємо, чи було відправлено повідомлення
+            _tcpClientMock.Verify(
+                c => c.SendMessageAsync(It.Is<byte[]>(msg => 
+                    msg.Skip(10).Take(4).SequenceEqual(new byte[] { 0x80, 0x02, 0x01, 0x01 }))), // Перевіряємо частину з args
+                Times.Once,
+                "Start IQ message was not sent correctly."
+            );
+            
+            // Перевіряємо, чи було запущено прослуховування UDP
+            _udpClientMock.Verify(c => c.StartListeningAsync(), Times.Once);
+            
+            // Перевіряємо прапорець стану
+            Assert.That(_client.IQStarted, Is.True);
+        }
+
+        [Test]
+        public async Task StopIQAsync_SendsCorrectMessageAndStopsListening()
+        {
+            // Act
+            await _client.StopIQAsync();
+
+            // Assert
+            // Перевіряємо, чи було відправлено повідомлення
+            _tcpClientMock.Verify(
+                c => c.SendMessageAsync(It.Is<byte[]>(msg => 
+                    msg.Skip(10).Take(4).SequenceEqual(new byte[] { 0x00, 0x01, 0x00, 0x00 }))), // Перевіряємо частину з args
+                Times.Once,
+                "Stop IQ message was not sent correctly."
+            );
+            
+            // Перевіряємо, чи було зупинено прослуховування UDP
+            _udpClientMock.Verify(c => c.StopListening(), Times.Once);
+
+            // Перевіряємо прапорець стану
+            Assert.That(_client.IQStarted, Is.False);
         }
 
         [Test]

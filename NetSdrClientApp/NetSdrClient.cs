@@ -136,10 +136,11 @@ namespace NetSdrClientApp
             if (data == null || data.Length == 0)
                 return;
 
+            // FIX: Додаємо придушення попередження nullability, оскільки тут очікується, що body буде не null.
             TranslateMessage(
                 data, out _, out _, out _, out var body);
 
-            var samples = GetSamples(16, body);
+            var samples = GetSamples(16, body!); 
 
             await WriteSamplesAsync(samples).ConfigureAwait(false);
         }

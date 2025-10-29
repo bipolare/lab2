@@ -65,7 +65,7 @@ public class NetSdrClientTests
         await ConnectAsyncTest();
 
         //act
-        _client.Disconect();
+        _client.Disconnect();
 
         //assert
         //No exception thrown

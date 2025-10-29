@@ -6,6 +6,9 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 
+// Додаємо цей рядок 👇
+using static NetSdrClientApp.Messages.NetSdrMessageHelper;
+
 namespace NetSdrClientApp
 {
     /// <summary>
@@ -49,15 +52,15 @@ namespace NetSdrClientApp
 
             var setupMessages = new List<byte[]>
             {
-                NetSdrMessageHelper.GetControlItemMessage(
+                GetControlItemMessage(
                     MsgTypes.SetControlItem, ControlItemCodes.IQOutputDataSampleRate, 
                     BitConverter.GetBytes(DefaultSampleRate).Take(5).ToArray()),
 
-                NetSdrMessageHelper.GetControlItemMessage(
+                GetControlItemMessage(
                     MsgTypes.SetControlItem, ControlItemCodes.RFFilter, 
                     BitConverter.GetBytes(AutomaticFilterMode)),
 
-                NetSdrMessageHelper.GetControlItemMessage(
+                GetControlItemMessage(
                     MsgTypes.SetControlItem, ControlItemCodes.ADModes, DefaultAdMode)
             };
 
@@ -84,7 +87,7 @@ namespace NetSdrClientApp
                 return;
 
             var args = new byte[] { 0x80, 0x02, 0x01, 0x01 };
-            var msg = NetSdrMessageHelper.GetControlItemMessage(
+            var msg = GetControlItemMessage(
                 MsgTypes.SetControlItem, ControlItemCodes.ReceiverState, args);
 
             await SendTcpRequestAsync(msg).ConfigureAwait(false);
@@ -102,7 +105,7 @@ namespace NetSdrClientApp
                 return;
 
             var stopArgs = new byte[] { 0x00, 0x01, 0x00, 0x00 };
-            var msg = NetSdrMessageHelper.GetControlItemMessage(
+            var msg = GetControlItemMessage(
                 MsgTypes.SetControlItem, ControlItemCodes.ReceiverState, stopArgs);
 
             await SendTcpRequestAsync(msg).ConfigureAwait(false);
@@ -122,7 +125,7 @@ namespace NetSdrClientApp
                 .Concat(BitConverter.GetBytes(hz).Take(5))
                 .ToArray();
 
-            var msg = NetSdrMessageHelper.GetControlItemMessage(
+            var msg = GetControlItemMessage(
                 MsgTypes.SetControlItem, ControlItemCodes.ReceiverFrequency, args);
 
             await SendTcpRequestAsync(msg).ConfigureAwait(false);
@@ -133,10 +136,10 @@ namespace NetSdrClientApp
             if (data == null || data.Length == 0)
                 return;
 
-            NetSdrMessageHelper.TranslateMessage(
+            TranslateMessage(
                 data, out _, out _, out _, out var body);
 
-            var samples = NetSdrMessageHelper.GetSamples(16, body);
+            var samples = GetSamples(16, body);
 
             await WriteSamplesAsync(samples).ConfigureAwait(false);
         }

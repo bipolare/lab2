@@ -57,8 +57,8 @@ namespace NetSdrClientApp.Tests
         public async Task ConnectAsync_SendsConfigurationMessages()
         {
             // Arrange
-            // Переконаємося, що на початку він не підключений, щоб спрацювало Connect()
-            _tcpClientMock.SetupGet(c => c.Connected).Returns(false).;
+            // Виправлення: Прибрано зайву крапку з комою (.;)
+            _tcpClientMock.SetupGet(c => c.Connected).Returns(false);
 
             // Act
             await _client.ConnectAsync();

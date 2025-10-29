@@ -1,3 +1,4 @@
+﻿using Moq;
 using Moq;
 using NetSdrClientApp;
 using NetSdrClientApp.Networking;
@@ -8,120 +9,63 @@ namespace NetSdrClientAppTests;
 
 public class NetSdrClientTests
 {
+    NetSdrClient _client;
+    Mock<ITcpClient> _tcpMock;
+    Mock<IUdpClient> _updMock;
     private NetSdrClient _client;
     private Mock<ITcpClient> _tcpMock;
-    private Mock<IUdpClient> _udpMock;
+    private Mock<IUdpClient> _updMock;
 
-    [SetUp]
-    public void Setup()
-    {
-        // TCP мок
-        _tcpMock = new Mock<ITcpClient>();
-        _tcpMock.Setup(tcp => tcp.Connected).Returns(false);
-        _tcpMock.Setup(tcp => tcp.Connect()).Callback(() =>
-        {
-            _tcpMock.Setup(t => t.Connected).Returns(true);
-        });
-        _tcpMock.Setup(tcp => tcp.Disconnect()).Callback(() =>
-        {
-            _tcpMock.Setup(t => t.Connected).Returns(false);
-        });
-        _tcpMock.Setup(tcp => tcp.SendMessageAsync(It.IsAny<byte[]>()))
-                .Callback<byte[]>((bytes) =>
-                {
-                    // Імітуємо подію отримання повідомлення
-                    _tcpMock.Raise(tcp => tcp.MessageReceived += null, _tcpMock.Object, bytes);
-                });
+    public NetSdrClientTests() { }
 
-        // UDP мок
-        _udpMock = new Mock<IUdpClient>();
-
-        // Створюємо клієнт
-        _client = new NetSdrClient(_tcpMock.Object, _udpMock.Object);
-    }
-
-    // Приватний метод для підключення клієнта
-    private async Task ConnectClientAsync()
-    {
-        await _client.ConnectAsync();
-    }
-
-    [Test]
-    public async Task ConnectAsyncTest()
-    {
-        // act
-        await ConnectClientAsync();
-
-        // assert
-        _tcpMock.Verify(tcp => tcp.Connect(), Times.Once);
-        _tcpMock.Verify(tcp => tcp.SendMessageAsync(It.IsAny<byte[]>()), Times.Exactly(3));
-    }
-
-    [Test]
-    public void DisconnectWithNoConnectionTest()
-    {
-        // act
+@@ -54,7 +56,6 @@ public async Task DisconnectWithNoConnectionTest()
         _client.Disconnect();
 
-        // assert
+        //assert
+        //No exception thrown
         _tcpMock.Verify(tcp => tcp.Disconnect(), Times.Once);
     }
 
-    [Test]
-    public async Task DisconnectTest()
-    {
-        // arrange
-        await ConnectClientAsync();
-
-        // act
+@@ -68,19 +69,16 @@ public async Task DisconnectTest()
         _client.Disconnect();
 
-        // assert
+        //assert
+        //No exception thrown
         _tcpMock.Verify(tcp => tcp.Disconnect(), Times.Once);
     }
 
     [Test]
     public async Task StartIQNoConnectionTest()
     {
-        // act
+
+        //act
         await _client.StartIQAsync();
 
-        // assert
+        //assert
+        //No exception thrown
         _tcpMock.Verify(tcp => tcp.SendMessageAsync(It.IsAny<byte[]>()), Times.Never);
         _tcpMock.VerifyGet(tcp => tcp.Connected, Times.AtLeastOnce);
     }
-
-    [Test]
-    public async Task StartIQTest()
-    {
-        // arrange
-        await ConnectClientAsync();
-
-        // act
+@@ -95,7 +93,6 @@ public async Task StartIQTest()
         await _client.StartIQAsync();
 
-        // assert
-        _udpMock.Verify(udp => udp.StartListeningAsync(), Times.Once);
+        //assert
+        //No exception thrown
+        _updMock.Verify(udp => udp.StartListeningAsync(), Times.Once);
         Assert.That(_client.IQStarted, Is.True);
     }
-
-    [Test]
-    public async Task StopIQTest()
-    {
-        // arrange
-        await ConnectClientAsync();
-        await _client.StartIQAsync();
-
-        // act
+@@ -110,10 +107,15 @@ public async Task StopIQTest()
         await _client.StopIQAsync();
 
-        // assert
-        _udpMock.Verify(udp => udp.StopListening(), Times.Once);
+        //assert
+        //No exception thrown
+        _updMock.Verify(tcp => tcp.StopListening(), Times.Once);
         Assert.That(_client.IQStarted, Is.False);
     }
 
+    //TODO: cover the rest of the NetSdrClient code here
     // --------------------------
-    // TearDown для очищення ресурсів
+    // Цей метод вирішує помилку NUnit1032
     [TearDown]
     public void Cleanup()
     {

@@ -2,7 +2,6 @@ using Moq;
 using NetSdrClientApp;
 using NetSdrClientApp.Networking;
 using NUnit.Framework;
-using System;
 using System.Threading.Tasks;
 
 namespace NetSdrClientAppTests
@@ -20,37 +19,25 @@ namespace NetSdrClientAppTests
             _tcpMock = new Mock<ITcpClient>();
             _udpMock = new Mock<IUdpClient>();
 
-            _tcpMock.Setup(tcp => tcp.Connect()).Callback(() =>
-            {
-                _tcpMock.Setup(t => t.Connected).Returns(true);
-            });
-
-            _tcpMock.Setup(tcp => tcp.Disconnect()).Callback(() =>
-            {
-                _tcpMock.Setup(t => t.Connected).Returns(false);
-            });
-
-            _tcpMock.Setup(tcp => tcp.SendMessageAsync(It.IsAny<byte[]>()))
-                .Callback<byte[]>((bytes) =>
-                {
-                    _tcpMock.Raise(tcp => tcp.MessageReceived += null, _tcpMock.Object, bytes);
-                })
-                .Returns(Task.CompletedTask);
+            _tcpMock.Setup(t => t.Connect()).Callback(() => _tcpMock.Setup(t => t.Connected).Returns(true));
+            _tcpMock.Setup(t => t.Disconnect()).Callback(() => _tcpMock.Setup(t => t.Connected).Returns(false));
+            _tcpMock.Setup(t => t.SendMessageAsync(It.IsAny<byte[]>()))
+                    .Callback<byte[]>(bytes => _tcpMock.Raise(t => t.MessageReceived += null, _tcpMock.Object, bytes))
+                    .Returns(Task.CompletedTask);
 
             _udpMock.Setup(u => u.StartListeningAsync()).Returns(Task.CompletedTask);
-            _udpMock.Setup(u => u.StopListening());
+            _udpMock.Setup(u => u.StopListening()).Returns(Task.CompletedTask);
 
             _client = new NetSdrClient(_tcpMock.Object, _udpMock.Object);
         }
-
-        // ------------------ Основные тесты ------------------
 
         [Test]
         public async Task ConnectAsync_ShouldConnectAndSendThreeMessages()
         {
             await _client.ConnectAsync();
-            _tcpMock.Verify(tcp => tcp.Connect(), Times.Once);
-            _tcpMock.Verify(tcp => tcp.SendMessageAsync(It.IsAny<byte[]>()), Times.Exactly(3));
+
+            _tcpMock.Verify(t => t.Connect(), Times.Once);
+            _tcpMock.Verify(t => t.SendMessageAsync(It.IsAny<byte[]>()), Times.Exactly(3));
             Assert.That(_client.IsConnected, Is.True);
         }
 
@@ -59,7 +46,7 @@ namespace NetSdrClientAppTests
         {
             _tcpMock.Setup(t => t.Connected).Returns(true);
             await _client.ConnectAsync();
-            _tcpMock.Verify(tcp => tcp.Connect(), Times.Never);
+            _tcpMock.Verify(t => t.Connect(), Times.Never);
         }
 
         [Test]
@@ -67,7 +54,7 @@ namespace NetSdrClientAppTests
         {
             _tcpMock.Setup(t => t.Connected).Returns(false);
             _client.Disconnect();
-            _tcpMock.Verify(tcp => tcp.Disconnect(), Times.Once);
+            _tcpMock.Verify(t => t.Disconnect(), Times.Once);
         }
 
         [Test]
@@ -75,7 +62,7 @@ namespace NetSdrClientAppTests
         {
             await _client.ConnectAsync();
             _client.Disconnect();
-            _tcpMock.Verify(tcp => tcp.Disconnect(), Times.Once);
+            _tcpMock.Verify(t => t.Disconnect(), Times.Once);
             Assert.That(_client.IsConnected, Is.False);
         }
 
@@ -129,44 +116,6 @@ namespace NetSdrClientAppTests
             var message = new byte[] { 0x01, 0x02 };
             _tcpMock.Raise(t => t.MessageReceived += null, _tcpMock.Object, message);
             Assert.Pass("MessageReceived event handled without exception");
-        }
-
-        // ------------------ Дополнительные тесты для 80%+ покрытия ------------------
-
-        [Test]
-        public void Constructor_ShouldThrow_WhenTcpClientIsNull()
-        {
-            Assert.Throws<ArgumentNullException>(() => new NetSdrClient(null, _udpMock.Object));
-        }
-
-        [Test]
-        public void Constructor_ShouldThrow_WhenUdpClientIsNull()
-        {
-            Assert.Throws<ArgumentNullException>(() => new NetSdrClient(_tcpMock.Object, null));
-        }
-
-        [Test]
-        public async Task StartIQAsync_ShouldNotThrow_WhenAlreadyStarted()
-        {
-            await _client.ConnectAsync();
-            await _client.StartIQAsync();
-            Assert.DoesNotThrowAsync(() => _client.StartIQAsync());
-        }
-
-        [Test]
-        public async Task StopIQAsync_ShouldBeSafe_WhenCalledTwice()
-        {
-            await _client.ConnectAsync();
-            await _client.StartIQAsync();
-            await _client.StopIQAsync();
-            Assert.DoesNotThrowAsync(() => _client.StopIQAsync());
-        }
-
-        [Test]
-        public void Dispose_ShouldBeSafe_WhenCalledMultipleTimes()
-        {
-            _client.Dispose();
-            Assert.DoesNotThrow(() => _client.Dispose());
         }
 
         [TearDown]

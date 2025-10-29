@@ -51,7 +51,7 @@ public class NetSdrClientTests
     public async Task DisconnectWithNoConnectionTest()
     {
         //act
-        _client.Disconect();
+        _client.Disconnect();
 
         //assert
         //No exception thrown

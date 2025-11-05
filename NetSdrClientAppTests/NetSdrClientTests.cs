@@ -1,86 +1,114 @@
+using NetSdrClientApp.Messages;
 using NetSdrClientApp.Networking;
+using Moq;
+using NUnit.Framework; 
 using System;
 using System.Threading.Tasks;
-using System.Net.Sockets;
-using System.Net;
-using System.Text;
-using EchoServer; // !!! ЦЕЙ using СТВОРЮЄ ПОРУШЕННЯ АРХІТЕКТУРИ (ЧЕРВОНИЙ PR) !!!
+using NetSdrClientApp; // Використовуємо явний простір імен
 
-namespace NetSdrClientApp
+namespace NetSdrClientApp.Tests
 {
-    public class NetSdrClient : IDisposable
+    [TestFixture] 
+    public class NetSdrClientTests
     {
-        private readonly ITcpClient _tcpClient;
-        private readonly IUdpClient _udpClient;
+        private Mock<ITcpClient> _tcpClientMock = null!;
+        private Mock<IUdpClient> _udpClientMock = null!;
+        private NetSdrClient _client = null!;
 
-        public NetSdrClient(ITcpClient tcpClient, IUdpClient udpClient)
+        [SetUp] 
+        public void SetUp()
         {
-            _tcpClient = tcpClient ?? throw new ArgumentNullException(nameof(tcpClient));
-            _udpClient = udpClient ?? throw new ArgumentNullException(nameof(udpClient));
+            _tcpClientMock = new Mock<ITcpClient>();
+            _udpClientMock = new Mock<IUdpClient>();
 
-            // !!! ЦЕЙ РЯДОК СТВОРЮЄ ПОРУШЕННЯ АРХІТЕКТУРИ (ЧЕРВОНИЙ PR) !!!
-            // Ми використовуємо клас EchoServer, змушуючи NetSdrClientApp залежати від EchoServer.
-            var securityBreach = new EchoServer(); 
-        }
-
-        public async Task ConnectAsync(string ipAddress, int tcpPort, int udpPort)
-        {
-            await _tcpClient.ConnectAsync(ipAddress, tcpPort);
-            _udpClient.StartListening(udpPort);
-        }
-
-        public void Disconnect()
-        {
-            _tcpClient.Disconnect();
-            _udpClient.StopListening();
-        }
-
-        public async Task StartIQAsync()
-        {
-            if (_tcpClient.Connected)
-            {
-                // Приклад: відправка команди Start IQ
-                byte[] message = Encoding.ASCII.GetBytes("start_iq\n");
-                await _tcpClient.SendMessageAsync(message);
-            }
-        }
-
-        public async Task StopIQAsync()
-        {
-            if (_tcpClient.Connected)
-            {
-                // Приклад: відправка команди Stop IQ
-                byte[] message = Encoding.ASCII.GetBytes("stop_iq\n");
-                await _tcpClient.SendMessageAsync(message);
-            }
-        }
-
-        public async Task ChangeFrequencyAsync(long frequency, int channel)
-        {
-            if (_tcpClient.Connected)
-            {
-                // Приклад: відправка команди зміни частоти
-                string command = $"set_freq {channel} {frequency}\n";
-                byte[] message = Encoding.ASCII.GetBytes(command);
-                await _tcpClient.SendMessageAsync(message);
-            }
-        }
-
-        private void OnUdpMessageReceived(object? sender, byte[]? data)
-        {
-            if (data == null || data.Length == 0)
-            {
-                return;
-            }
+            // Налаштування поведінки за замовчуванням
+            _tcpClientMock.SetupGet(c => c.Connected).Returns(true);
             
-            // Обробка UDP даних
-            Console.WriteLine($"UDP Data Received: {BitConverter.ToString(data)}");
+            // Виправлення: Уникнення помилки CS0118.
+            // При створенні об'єкту NetSdrClient ми передаємо тільки його залежності,
+            // без спроб використовувати EchoServer чи інші зайві класи тут.
+            _client = new NetSdrClient(_tcpClientMock.Object, _udpClientMock.Object);
+        }
+        
+        [TearDown]
+        public void TearDown()
+        {
+            _client?.Dispose();
         }
 
-        public void Dispose()
+        // --- Тести для покриття логіки NetSdrClient ---
+        
+        [Test]
+        public void Constructor_ThrowsArgumentNullException_WhenTcpClientIsNull()
         {
-            Disconnect();
-            GC.SuppressFinalize(this);
+            Assert.Throws<ArgumentNullException>(() => 
+                new NetSdrClient(null!, _udpClientMock.Object));
+        }
+
+        [Test]
+        public void Constructor_ThrowsArgumentNullException_WhenUdpClientIsNull()
+        {
+            Assert.Throws<ArgumentNullException>(() => 
+                new NetSdrClient(_tcpClientMock.Object, null!));
+        }
+
+        [Test]
+        public async Task StartIQAsync_DoesNothing_WhenNotConnected()
+        {
+            _tcpClientMock.SetupGet(c => c.Connected).Returns(false);
+            
+            await _client.StartIQAsync();
+
+            _tcpClientMock.Verify(c => c.SendMessageAsync(It.IsAny<byte[]>()), Times.Never);
+        }
+
+        [Test]
+        public async Task StopIQAsync_DoesNothing_WhenNotConnected()
+        {
+            _tcpClientMock.SetupGet(c => c.Connected).Returns(false);
+            
+            await _client.StopIQAsync();
+
+            _tcpClientMock.Verify(c => c.SendMessageAsync(It.IsAny<byte[]>()), Times.Never);
+        }
+
+        [Test]
+        public async Task ChangeFrequencyAsync_DoesNothing_WhenNotConnected()
+        {
+            _tcpClientMock.SetupGet(c => c.Connected).Returns(false);
+            
+            await _client.ChangeFrequencyAsync(100000, 1);
+
+            _tcpClientMock.Verify(c => c.SendMessageAsync(It.IsAny<byte[]>()), Times.Never);
+        }
+        
+        [Test]
+        public void OnUdpMessageReceived_IgnoresNullData()
+        {
+            // Імітуємо виклик події з null даними.
+            _udpClientMock.Raise(c => c.MessageReceived += null, _udpClientMock.Object, (byte[]?)null);
+
+            Assert.Pass(); 
+        }
+
+        [Test]
+        public void OnUdpMessageReceived_IgnoresEmptyData()
+        {
+            // Імітуємо виклик події з порожнім масивом
+            _udpClientMock.Raise(c => c.MessageReceived += null, _udpClientMock.Object, new byte[0]);
+
+            Assert.Pass();
+        }
+        
+        [Test]
+        public void Dispose_DisconnectsAndStopsListening()
+        {
+            _tcpClientMock.SetupGet(c => c.Connected).Returns(true);
+            
+            _client.Dispose();
+
+            _tcpClientMock.Verify(c => c.Disconnect(), Times.Once); 
+            _udpClientMock.Verify(c => c.StopListening(), Times.Once);
         }
     }
-}
+} 

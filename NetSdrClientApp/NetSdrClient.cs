@@ -5,209 +5,214 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-
-// Додаємо цей рядок 👇
+// 1. Додаємо заборонену залежність для провалу тесту
+using EchoServer; 
 using static NetSdrClientApp.Messages.NetSdrMessageHelper;
 
 namespace NetSdrClientApp
 {
-    /// <summary>
-    /// Клієнт для взаємодії з NetSDR через TCP/UDP.
-    /// </summary>
-    public sealed class NetSdrClient : IDisposable
-    {
-        private readonly ITcpClient _tcpClient;
-        private readonly IUdpClient _udpClient;
-        private readonly object _lock = new();
-        private TaskCompletionSource<byte[]>? _responseTaskSource;
+	/// <summary>
+	/// Клієнт для взаємодії з NetSDR через TCP/UDP.
+	/// </summary>
+	public sealed class NetSdrClient : IDisposable
+	{
+		private readonly ITcpClient _tcpClient;
+		private readonly IUdpClient _udpClient;
+		private readonly object _lock = new();
+		private TaskCompletionSource<byte[]>? _responseTaskSource;
 
-        private const long DefaultSampleRate = 100_000;
-        private const ushort AutomaticFilterMode = 0;
-        private static readonly byte[] DefaultAdMode = { 0x00, 0x03 };
-        private static readonly string SampleFileName = "samples.bin";
+		private const long DefaultSampleRate = 100_000;
+		private const ushort AutomaticFilterMode = 0;
+		private static readonly byte[] DefaultAdMode = { 0x00, 0x03 };
+		private static readonly string SampleFileName = "samples.bin";
+        
+        // 2. СВІДОМЕ ПОРУШЕННЯ АРХІТЕКТУРИ! 
+        // NetSdrClient (Application Layer) не повинен знати про EchoServer (Infrastructure/Test).
+        private readonly EchoServer.EchoServer _serverHarness = new EchoServer.EchoServer();
 
-        /// <summary>
-        /// Вказує, чи активний прийом IQ-даних.
-        /// </summary>
-        public bool IQStarted { get; private set; }
 
-        public NetSdrClient(ITcpClient tcpClient, IUdpClient udpClient)
-        {
-            _tcpClient = tcpClient ?? throw new ArgumentNullException(nameof(tcpClient));
-            _udpClient = udpClient ?? throw new ArgumentNullException(nameof(udpClient));
+		/// <summary>
+		/// Вказує, чи активний прийом IQ-даних.
+		/// </summary>
+		public bool IQStarted { get; private set; }
 
-            _tcpClient.MessageReceived += OnTcpMessageReceived;
-            _udpClient.MessageReceived += OnUdpMessageReceived;
-        }
+		public NetSdrClient(ITcpClient tcpClient, IUdpClient udpClient)
+		{
+			_tcpClient = tcpClient ?? throw new ArgumentNullException(nameof(tcpClient));
+			_udpClient = udpClient ?? throw new ArgumentNullException(nameof(udpClient));
 
-        /// <summary>
-        /// Підключення до SDR-сервера та ініціалізація параметрів.
-        /// </summary>
-        public async Task ConnectAsync()
-        {
-            if (_tcpClient.Connected)
-                return;
+			_tcpClient.MessageReceived += OnTcpMessageReceived;
+			_udpClient.MessageReceived += OnUdpMessageReceived;
+		}
 
-            _tcpClient.Connect();
+		/// <summary>
+		/// Підключення до SDR-сервера та ініціалізація параметрів.
+		/// </summary>
+		public async Task ConnectAsync()
+		{
+			if (_tcpClient.Connected)
+				return;
 
-            var setupMessages = new List<byte[]>
-            {
-                GetControlItemMessage(
-                    MsgTypes.SetControlItem, ControlItemCodes.IQOutputDataSampleRate, 
-                    BitConverter.GetBytes(DefaultSampleRate).Take(5).ToArray()),
+			_tcpClient.Connect();
 
-                GetControlItemMessage(
-                    MsgTypes.SetControlItem, ControlItemCodes.RFFilter, 
-                    BitConverter.GetBytes(AutomaticFilterMode)),
+			var setupMessages = new List<byte[]>
+			{
+				GetControlItemMessage(
+					MsgTypes.SetControlItem, ControlItemCodes.IQOutputDataSampleRate, 
+					BitConverter.GetBytes(DefaultSampleRate).Take(5).ToArray()),
 
-                GetControlItemMessage(
-                    MsgTypes.SetControlItem, ControlItemCodes.ADModes, DefaultAdMode)
-            };
+				GetControlItemMessage(
+					MsgTypes.SetControlItem, ControlItemCodes.RFFilter, 
+					BitConverter.GetBytes(AutomaticFilterMode)),
 
-            foreach (var msg in setupMessages)
-            {
-                await SendTcpRequestAsync(msg).ConfigureAwait(false);
-            }
-        }
+				GetControlItemMessage(
+					MsgTypes.SetControlItem, ControlItemCodes.ADModes, DefaultAdMode)
+			};
 
-        /// <summary>
-        /// Відключення від SDR-сервера.
-        /// </summary>
-        public void Disconnect()
-        {
-            _tcpClient.Disconnect();
-        }
+			foreach (var msg in setupMessages)
+			{
+				await SendTcpRequestAsync(msg).ConfigureAwait(false);
+			}
+		}
 
-        /// <summary>
-        /// Запуск прийому IQ-даних.
-        /// </summary>
-        public async Task StartIQAsync()
-        {
-            if (!EnsureConnected())
-                return;
+		/// <summary>
+		/// Відключення від SDR-сервера.
+		/// </summary>
+		public void Disconnect()
+		{
+			_tcpClient.Disconnect();
+		}
 
-            var args = new byte[] { 0x80, 0x02, 0x01, 0x01 };
-            var msg = GetControlItemMessage(
-                MsgTypes.SetControlItem, ControlItemCodes.ReceiverState, args);
+		/// <summary>
+		/// Запуск прийому IQ-даних.
+		/// </summary>
+		public async Task StartIQAsync()
+		{
+			if (!EnsureConnected())
+				return;
 
-            await SendTcpRequestAsync(msg).ConfigureAwait(false);
-            IQStarted = true;
+			var args = new byte[] { 0x80, 0x02, 0x01, 0x01 };
+			var msg = GetControlItemMessage(
+				MsgTypes.SetControlItem, ControlItemCodes.ReceiverState, args);
 
-            _ = _udpClient.StartListeningAsync();
-        }
+			await SendTcpRequestAsync(msg).ConfigureAwait(false);
+			IQStarted = true;
 
-        /// <summary>
-        /// Зупинка прийому IQ-даних.
-        /// </summary>
-        public async Task StopIQAsync()
-        {
-            if (!EnsureConnected())
-                return;
+			_ = _udpClient.StartListeningAsync();
+		}
 
-            var stopArgs = new byte[] { 0x00, 0x01, 0x00, 0x00 };
-            var msg = GetControlItemMessage(
-                MsgTypes.SetControlItem, ControlItemCodes.ReceiverState, stopArgs);
+		/// <summary>
+		/// Зупинка прийому IQ-даних.
+		/// </summary>
+		public async Task StopIQAsync()
+		{
+			if (!EnsureConnected())
+				return;
 
-            await SendTcpRequestAsync(msg).ConfigureAwait(false);
-            IQStarted = false;
-            _udpClient.StopListening();
-        }
+			var stopArgs = new byte[] { 0x00, 0x01, 0x00, 0x00 };
+			var msg = GetControlItemMessage(
+				MsgTypes.SetControlItem, ControlItemCodes.ReceiverState, stopArgs);
 
-        /// <summary>
-        /// Змінює частоту прийому на заданому каналі.
-        /// </summary>
-        public async Task ChangeFrequencyAsync(long hz, int channel)
-        {
-            if (!EnsureConnected())
-                return;
+			await SendTcpRequestAsync(msg).ConfigureAwait(false);
+			IQStarted = false;
+			_udpClient.StopListening();
+		}
 
-            var args = new[] { (byte)channel }
-                .Concat(BitConverter.GetBytes(hz).Take(5))
-                .ToArray();
+		/// <summary>
+		/// Змінює частоту прийому на заданому каналі.
+		/// </summary>
+		public async Task ChangeFrequencyAsync(long hz, int channel)
+		{
+			if (!EnsureConnected())
+				return;
 
-            var msg = GetControlItemMessage(
-                MsgTypes.SetControlItem, ControlItemCodes.ReceiverFrequency, args);
+			var args = new[] { (byte)channel }
+				.Concat(BitConverter.GetBytes(hz).Take(5))
+				.ToArray();
 
-            await SendTcpRequestAsync(msg).ConfigureAwait(false);
-        }
+			var msg = GetControlItemMessage(
+				MsgTypes.SetControlItem, ControlItemCodes.ReceiverFrequency, args);
 
-        private async void OnUdpMessageReceived(object? sender, byte[] data)
-        {
-            if (data == null || data.Length == 0)
-                return;
+			await SendTcpRequestAsync(msg).ConfigureAwait(false);
+		}
 
-            // FIX: Додаємо придушення попередження nullability, оскільки тут очікується, що body буде не null.
-            TranslateMessage(
-                data, out _, out _, out _, out var body);
+		private async void OnUdpMessageReceived(object? sender, byte[] data)
+		{
+			if (data == null || data.Length == 0)
+				return;
 
-            var samples = GetSamples(16, body!); 
+			// FIX: Додаємо придушення попередження nullability, оскільки тут очікується, що body буде не null.
+			TranslateMessage(
+				data, out _, out _, out _, out var body);
 
-            await WriteSamplesAsync(samples).ConfigureAwait(false);
-        }
+			var samples = GetSamples(16, body!); 
 
-        private static async Task WriteSamplesAsync(IEnumerable<int> samples)
-        {
-            await using var fs = new FileStream(
-                SampleFileName, FileMode.Append, FileAccess.Write, FileShare.Read);
+			await WriteSamplesAsync(samples).ConfigureAwait(false);
+		}
 
-            await using var bw = new BinaryWriter(fs);
-            foreach (var sample in samples)
-            {
-                bw.Write((short)sample);
-            }
-        }
+		private static async Task WriteSamplesAsync(IEnumerable<int> samples)
+		{
+			await using var fs = new FileStream(
+				SampleFileName, FileMode.Append, FileAccess.Write, FileShare.Read);
 
-        private async Task<byte[]?> SendTcpRequestAsync(byte[] msg)
-        {
-            if (!_tcpClient.Connected)
-            {
-                Console.WriteLine("No active connection.");
-                return null;
-            }
+			await using var bw = new BinaryWriter(fs);
+			foreach (var sample in samples)
+			{
+				bw.Write((short)sample);
+			}
+		}
 
-            var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+		private async Task<byte[]?> SendTcpRequestAsync(byte[] msg)
+		{
+			if (!_tcpClient.Connected)
+			{
+				Console.WriteLine("No active connection.");
+				return null;
+			}
 
-            lock (_lock)
-            {
-                _responseTaskSource = tcs;
-            }
+			var tcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            await _tcpClient.SendMessageAsync(msg).ConfigureAwait(false);
+			lock (_lock)
+			{
+				_responseTaskSource = tcs;
+			}
 
-            var response = await tcs.Task.ConfigureAwait(false);
-            return response;
-        }
+			await _tcpClient.SendMessageAsync(msg).ConfigureAwait(false);
 
-        private void OnTcpMessageReceived(object? sender, byte[] e)
-        {
-            TaskCompletionSource<byte[]>? tcs;
-            lock (_lock)
-            {
-                tcs = _responseTaskSource;
-                _responseTaskSource = null;
-            }
+			var response = await tcs.Task.ConfigureAwait(false);
+			return response;
+		}
 
-            tcs?.SetResult(e);
-        }
+		private void OnTcpMessageReceived(object? sender, byte[] e)
+		{
+			TaskCompletionSource<byte[]>? tcs;
+			lock (_lock)
+			{
+				tcs = _responseTaskSource;
+				_responseTaskSource = null;
+			}
 
-        private bool EnsureConnected()
-        {
-            if (_tcpClient.Connected)
-                return true;
+			tcs?.SetResult(e);
+		}
 
-            Console.WriteLine("No active connection.");
-            return false;
-        }
+		private bool EnsureConnected()
+		{
+			if (_tcpClient.Connected)
+				return true;
 
-        public void Dispose()
-        {
-            _tcpClient.MessageReceived -= OnTcpMessageReceived;
-            _udpClient.MessageReceived -= OnUdpMessageReceived;
+			Console.WriteLine("No active connection.");
+			return false;
+		}
 
-            if (_tcpClient.Connected)
-                _tcpClient.Disconnect();
+		public void Dispose()
+		{
+			_tcpClient.MessageReceived -= OnTcpMessageReceived;
+			_udpClient.MessageReceived -= OnUdpMessageReceived;
 
-            _udpClient.StopListening();
-        }
-    }
+			if (_tcpClient.Connected)
+				_tcpClient.Disconnect();
+
+			_udpClient.StopListening();
+		}
+	}
 }
